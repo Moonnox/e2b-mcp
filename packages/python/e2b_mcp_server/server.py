@@ -9,6 +9,7 @@ A remote MCP server that exposes E2B code interpreter functionality
 import os
 import json
 import logging
+import uuid
 from typing import Any, Dict, List, Optional
 from collections.abc import Sequence
 
@@ -27,9 +28,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import uvicorn
+import httpx
 
 from e2b_code_interpreter import Sandbox
 from dotenv import load_dotenv
+from supabase import create_client, AsyncClient
 
 # Load environment variables
 load_dotenv()
@@ -47,15 +50,97 @@ SECRET_KEY = os.getenv("SECRET_KEY", "")
 PORT = int(os.getenv("PORT", "8080"))
 HOST = os.getenv("HOST", "0.0.0.0")
 REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "true").lower() == "true"
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+
+# Initialize Supabase async client
+supabase_client: Optional[AsyncClient] = None
+if SUPABASE_URL and SUPABASE_KEY:
+    supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY, is_async=True)
+    logger.info("Supabase async client initialized")
+else:
+    logger.warning("Supabase credentials not configured - file export functionality will be disabled")
 
 
 class ToolSchema(BaseModel):
     """Request model for code execution"""
     code: str = Field(..., description="Python code to execute in the E2B sandbox")
+    file_urls: Optional[List[str]] = Field(None, description="Optional list of file URLs to download and make available in the sandbox")
 
 
 # Initialize MCP server
 mcp_server = Server("e2b-code-mcp-server")
+
+
+async def download_file_from_url(url: str) -> bytes:
+    """
+    Download a file from a URL
+    
+    Args:
+        url: URL of the file to download
+        
+    Returns:
+        File content as bytes
+        
+    Raises:
+        Exception: If download fails
+    """
+    try:
+        logger.info(f"Downloading file from {url}")
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            logger.info(f"Successfully downloaded file from {url} ({len(response.content)} bytes)")
+            return response.content
+    except Exception as e:
+        logger.error(f"Failed to download file from {url}: {str(e)}")
+        raise Exception(f"Failed to download file from {url}: {str(e)}")
+
+
+async def upload_to_supabase(filename: str, content: bytes) -> str:
+    """
+    Upload a file to Supabase storage and return a signed URL
+    
+    Args:
+        filename: Name of the file (will be prefixed with UUID for uniqueness)
+        content: File content as bytes
+        
+    Returns:
+        Signed URL valid for 24 hours
+        
+    Raises:
+        Exception: If upload fails or Supabase client is not configured
+    """
+    if not supabase_client:
+        raise Exception("Supabase client not configured. Please set SUPABASE_URL and SUPABASE_KEY environment variables.")
+    
+    try:
+        # Generate a unique filename to avoid collisions
+        unique_filename = f"{uuid.uuid4()}_{filename}"
+        
+        logger.info(f"Uploading file {filename} to Supabase as {unique_filename}")
+        
+        # Upload to the 'exports' bucket (async)
+        await supabase_client.storage.from_('exports').upload(
+            path=unique_filename,
+            file=content,
+            file_options={"content-type": "application/octet-stream"}
+        )
+        
+        # Generate signed URL valid for 24 hours (86400 seconds) (async)
+        signed_url_response = await supabase_client.storage.from_('exports').create_signed_url(
+            path=unique_filename,
+            expires_in=86400
+        )
+        
+        signed_url = signed_url_response['signedURL']
+        logger.info(f"Successfully uploaded {filename} to Supabase: {signed_url}")
+        
+        return signed_url
+        
+    except Exception as e:
+        logger.error(f"Failed to upload file {filename} to Supabase: {str(e)}")
+        raise Exception(f"Failed to upload file to Supabase: {str(e)}")
 
 
 @mcp_server.list_tools()
@@ -66,7 +151,7 @@ async def handle_list_tools() -> List[Tool]:
     return [
         Tool(
             name="run_code",
-            description="Run python code in a secure sandbox by E2B. Using the Jupyter Notebook syntax.",
+            description="Run python code in a secure sandbox by E2B. Using the Jupyter Notebook syntax. Supports downloading files from URLs (file_urls parameter) and exporting generated files to Supabase by saving them to the output directory.",
             inputSchema=ToolSchema.model_json_schema()
         )
     ]
@@ -88,17 +173,101 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
     except ValidationError as e:
         raise ValueError(f"Invalid code arguments: {e}") from e
     
+    # Generate unique session ID for multi-tenant isolation
+    session_id = str(uuid.uuid4())
+    input_dir = f"/home/user/input_{session_id}"
+    output_dir = f"/home/user/output_{session_id}"
+    
+    logger.info(f"Starting execution for session {session_id}")
+    
     # Execute code in E2B sandbox
+    sbx = None
     try:
         sbx = Sandbox()
+        
+        # Create input and output directories
+        sbx.filesystem.make_dir(input_dir)
+        sbx.filesystem.make_dir(output_dir)
+        logger.info(f"Created directories: {input_dir}, {output_dir}")
+        
+        # Process file_urls if provided
+        downloaded_files = []
+        if arguments.file_urls:
+            logger.info(f"Processing {len(arguments.file_urls)} file URLs")
+            for file_url in arguments.file_urls:
+                try:
+                    # Download file
+                    file_content = await download_file_from_url(file_url)
+                    
+                    # Extract filename from URL
+                    filename = file_url.split('/')[-1].split('?')[0]
+                    if not filename:
+                        filename = f"file_{len(downloaded_files)}"
+                    
+                    # Upload to sandbox input directory
+                    file_path = f"{input_dir}/{filename}"
+                    sbx.filesystem.write(file_path, file_content)
+                    downloaded_files.append(filename)
+                    logger.info(f"Uploaded {filename} to {file_path}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to process file URL {file_url}: {str(e)}")
+                    # Continue with other files even if one fails
+        
+        # Execute the code
         execution = sbx.run_code(arguments.code)
         logger.info(f"Execution completed: stdout={len(execution.logs.stdout)} bytes, stderr={len(execution.logs.stderr)} bytes")
         
         result = {
             "stdout": execution.logs.stdout,
             "stderr": execution.logs.stderr,
-            "status": "success"
+            "status": "success",
+            "session_id": session_id,
+            "input_directory": input_dir,
+            "output_directory": output_dir,
+            "downloaded_files": downloaded_files
         }
+        
+        # Check for generated files in output directory
+        exported_files = []
+        if supabase_client:
+            try:
+                # List files in output directory
+                output_files = sbx.filesystem.list(output_dir)
+                logger.info(f"Found {len(output_files)} files in output directory")
+                
+                for file_info in output_files:
+                    if file_info.type == "file":
+                        try:
+                            # Read file from sandbox
+                            file_path = f"{output_dir}/{file_info.name}"
+                            file_content = sbx.filesystem.read(file_path)
+                            
+                            # Upload to Supabase
+                            signed_url = await upload_to_supabase(file_info.name, file_content)
+                            exported_files.append({
+                                "filename": file_info.name,
+                                "url": signed_url,
+                                "size": len(file_content)
+                            })
+                            logger.info(f"Exported {file_info.name} to Supabase")
+                            
+                        except Exception as e:
+                            logger.error(f"Failed to export file {file_info.name}: {str(e)}")
+                            # Continue with other files even if one fails
+                            
+            except Exception as e:
+                logger.error(f"Failed to process output directory: {str(e)}")
+                result["export_error"] = str(e)
+        else:
+            logger.info("Supabase not configured - skipping file export")
+        
+        if exported_files:
+            result["exported_files"] = exported_files
+        
+        # Close the sandbox
+        if sbx:
+            sbx.close()
         
         return [
             TextContent(
@@ -109,13 +278,22 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
         
     except Exception as e:
         error_message = f"Error executing code in E2B sandbox: {str(e)}"
-        logger.error(error_message)
+        logger.error(error_message, exc_info=True)
+        
+        # Close the sandbox in case of error
+        if sbx:
+            try:
+                sbx.close()
+            except:
+                pass
+        
         return [
             TextContent(
                 type="text",
                 text=json.dumps({
                     "error": error_message,
-                    "status": "failed"
+                    "status": "failed",
+                    "session_id": session_id
                 }, indent=2)
             )
         ]
@@ -129,6 +307,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"E2B API Key configured: {'Yes' if E2B_API_KEY else 'No'}")
     logger.info(f"Authentication enabled: {REQUIRE_AUTH}")
     logger.info(f"Secret Key configured: {'Yes' if SECRET_KEY else 'No'}")
+    logger.info(f"Supabase configured: {'Yes' if supabase_client else 'No'}")
     yield
     logger.info("Shutting down MCP E2B Code Server")
 
@@ -361,13 +540,20 @@ async def list_tools():
         "tools": [
             {
                 "name": "run_code",
-                "description": "Run python code in a secure sandbox by E2B. Using the Jupyter Notebook syntax.",
+                "description": "Run python code in a secure sandbox by E2B. Using the Jupyter Notebook syntax. Supports downloading files from URLs (file_urls parameter) and exporting generated files to Supabase by saving them to the output directory.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "code": {
                             "type": "string",
                             "description": "Python code to execute in the E2B sandbox"
+                        },
+                        "file_urls": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            },
+                            "description": "Optional list of file URLs to download and make available in the sandbox"
                         }
                     },
                     "required": ["code"]
