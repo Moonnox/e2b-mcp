@@ -32,7 +32,7 @@ import httpx
 
 from e2b_code_interpreter import Sandbox
 from dotenv import load_dotenv
-from supabase import create_client, AsyncClient
+from supabase import acreate_client, AsyncClient
 
 # Load environment variables
 load_dotenv()
@@ -53,13 +53,8 @@ REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "true").lower() == "true"
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
-# Initialize Supabase async client
+# Initialize Supabase async client (will be set during startup)
 supabase_client: Optional[AsyncClient] = None
-if SUPABASE_URL and SUPABASE_KEY:
-    supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY, is_async=True)
-    logger.info("Supabase async client initialized")
-else:
-    logger.warning("Supabase credentials not configured - file export functionality will be disabled")
 
 
 class ToolSchema(BaseModel):
@@ -303,6 +298,19 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for FastAPI"""
+    global supabase_client
+    
+    # Initialize Supabase async client if credentials are provided
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            supabase_client = await acreate_client(SUPABASE_URL, SUPABASE_KEY)
+            logger.info("Supabase async client initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize Supabase client: {e}")
+            supabase_client = None
+    else:
+        logger.warning("Supabase credentials not configured - file export functionality will be disabled")
+    
     logger.info(f"Starting MCP E2B Code Server on {HOST}:{PORT}")
     logger.info(f"E2B API Key configured: {'Yes' if E2B_API_KEY else 'No'}")
     logger.info(f"Authentication enabled: {REQUIRE_AUTH}")
