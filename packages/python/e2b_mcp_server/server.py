@@ -32,7 +32,8 @@ import httpx
 
 from e2b_code_interpreter import Sandbox
 from dotenv import load_dotenv
-from supabase import acreate_client, AsyncClient
+from supabase._async.client import AsyncClient as Client, create_client
+from supabase.lib.client_options import ClientOptions
 
 # Load environment variables
 load_dotenv()
@@ -54,7 +55,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 # Initialize Supabase async client (will be set during startup)
-supabase_client: Optional[AsyncClient] = None
+supabase_client: Optional[Client] = None
 
 
 class ToolSchema(BaseModel):
@@ -303,7 +304,14 @@ async def lifespan(app: FastAPI):
     # Initialize Supabase async client if credentials are provided
     if SUPABASE_URL and SUPABASE_KEY:
         try:
-            supabase_client = await acreate_client(SUPABASE_URL, SUPABASE_KEY)
+            supabase_client = await create_client(
+                SUPABASE_URL,
+                SUPABASE_KEY,
+                options=ClientOptions(
+                    postgrest_client_timeout=10,
+                    storage_client_timeout=10
+                )
+            )
             logger.info("Supabase async client initialized")
         except Exception as e:
             logger.error(f"Failed to initialize Supabase client: {e}")
