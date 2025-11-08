@@ -320,9 +320,9 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
                     signed_url = await upload_to_supabase(zip_filename, zip_content)
                     logger.info(f"Successfully uploaded to Supabase. Signed URL: {signed_url}")
                     
-                    exported_zip = {
+                    zip_of_generated_files = {
                         "filename": zip_filename,
-                        "url": signed_url,
+                        "download_url": signed_url,
                         "size": len(zip_content),
                         "files_count": len(file_list)
                     }
