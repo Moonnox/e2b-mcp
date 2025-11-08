@@ -1760,14 +1760,14 @@ supabase-functions = "*"
 
 [[package]]
 name = "supabase-auth"
-version = "2.24.0"
+version = "2.23.2"
 description = "Python Client Library for Supabase Auth"
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
 files = [
-    {file = "supabase_auth-2.24.0-py3-none-any.whl", hash = "sha256:9229d1d13cd21abc082ed81602226d4f8d03422f3e73d22412f55f24c374bc6f"},
-    {file = "supabase_auth-2.24.0.tar.gz", hash = "sha256:8b3ed605ce8cfa308e88620ccf9dc42c8780270353968e4b49853fe9a7849ec9"},
+    {file = "supabase_auth-2.23.2-py3-none-any.whl", hash = "sha256:2e3c4681436ae83a630191402c1bc118195fd8472b0b4b83516f862391a68650"},
+    {file = "supabase_auth-2.23.2.tar.gz", hash = "sha256:aa4ff37f32112a385ebec3fa5e9722fc3ff78c4a000cafdbe008b730d6d46051"},
 ]
 
 [package.dependencies]
@@ -2051,4 +2051,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<4.0"
-content-hash = "165dbc409a0980b34c660da1bdc6f992188ae1bde5bd1341708936b8bc14b1f4"
+content-hash = "5715c629cb4d0fe45f2a3a669264db282240e59a3259163f96eb55bb89842f5b"
