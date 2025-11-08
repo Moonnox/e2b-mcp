@@ -33,7 +33,6 @@ import uvicorn
 import httpx
 
 from e2b_code_interpreter import Sandbox
-from e2b_code_interpreter.models import FileType
 from dotenv import load_dotenv
 from supabase._async.client import AsyncClient as Client, create_client
 from supabase.lib.client_options import ClientOptions
@@ -275,10 +274,11 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
                 
                 # Log all items found
                 for item in work_files:
-                    logger.info(f"  - {item.name} (type: {item.type})")
+                    logger.info(f"  - {item.name} (type: {item.type}, type name: {item.type.name if hasattr(item.type, 'name') else str(item.type)})")
                 
                 # Filter for actual files (not directories)
-                file_list = [f for f in work_files if f.type == FileType.FILE]
+                # Check using enum name since FileType.FILE is the enum value
+                file_list = [f for f in work_files if hasattr(f.type, 'name') and f.type.name == 'FILE']
                 logger.info(f"After filtering, found {len(file_list)} files (non-directories)")
                 
                 if file_list:
