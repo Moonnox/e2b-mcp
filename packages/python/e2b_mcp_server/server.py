@@ -254,6 +254,7 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
             "stderr": stderr_lines,
             "status": "success",
             "session_id": session_id,
+            "code": arguments.code,  # Include the executed code
             "input_directory": input_dir,
             "output_directory": output_dir,
             "downloaded_files": downloaded_files
