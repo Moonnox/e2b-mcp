@@ -147,7 +147,7 @@ async def handle_list_tools() -> List[Tool]:
     return [
         Tool(
             name="run_code",
-            description="Run python code in a secure sandbox by E2B. Using the Jupyter Notebook syntax. Supports downloading files from URLs (file_urls parameter) and exporting generated files to Supabase by saving them to the output directory.",
+            description="Run python code in a secure sandbox by E2B. Using the Jupyter Notebook syntax. Supports downloading files from URLs (file_urls parameter).",
             inputSchema=ToolSchema.model_json_schema()
         )
     ]
