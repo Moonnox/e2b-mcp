@@ -261,56 +261,83 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
         
         # Check for generated files in working directory and create a zip file
         exported_zip = None
+        logger.info(f"=== Starting file export process ===")
+        logger.info(f"Working directory: {work_dir}")
+        logger.info(f"Supabase client configured: {supabase_client is not None}")
+        
         if supabase_client:
             try:
                 # List files in working directory
+                logger.info(f"Attempting to list files in {work_dir}")
                 work_files = sbx.files.list(work_dir)
-                logger.info(f"Found {len(work_files)} items in working directory")
+                logger.info(f"Successfully listed directory. Found {len(work_files)} items total")
+                
+                # Log all items found
+                for item in work_files:
+                    logger.info(f"  - {item.name} (type: {item.type})")
                 
                 # Filter for actual files (not directories)
                 file_list = [f for f in work_files if f.type == "file"]
-                logger.info(f"Found {len(file_list)} files to export")
+                logger.info(f"After filtering, found {len(file_list)} files (non-directories)")
                 
                 if file_list:
+                    logger.info("Creating zip file with the following files:")
+                    for f in file_list:
+                        logger.info(f"  - {f.name}")
+                    
                     # Create a zip file in memory
                     zip_buffer = io.BytesIO()
+                    files_added = 0
                     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
                         for file_info in file_list:
                             try:
                                 # Read file from sandbox
                                 file_path = f"{work_dir}/{file_info.name}"
+                                logger.info(f"Reading file: {file_path}")
                                 file_content = sbx.files.read(file_path)
+                                logger.info(f"Successfully read {file_info.name}: {len(file_content)} bytes")
                                 
                                 # Add file to zip
                                 zip_file.writestr(file_info.name, file_content)
+                                files_added += 1
                                 logger.info(f"Added {file_info.name} to zip archive ({len(file_content)} bytes)")
                                 
                             except Exception as e:
-                                logger.error(f"Failed to add file {file_info.name} to zip: {str(e)}")
+                                logger.error(f"Failed to add file {file_info.name} to zip: {str(e)}", exc_info=True)
                                 # Continue with other files even if one fails
+                    
+                    logger.info(f"Zip file created with {files_added} files")
                     
                     # Get the zip file bytes
                     zip_buffer.seek(0)
                     zip_content = zip_buffer.read()
+                    logger.info(f"Zip file size: {len(zip_content)} bytes")
                     
                     # Upload the zip file to Supabase
                     zip_filename = f"output_{session_id}.zip"
+                    logger.info(f"Uploading zip file to Supabase: {zip_filename}")
                     signed_url = await upload_to_supabase(zip_filename, zip_content)
+                    logger.info(f"Successfully uploaded to Supabase. Signed URL: {signed_url}")
+                    
                     exported_zip = {
                         "filename": zip_filename,
                         "url": signed_url,
                         "size": len(zip_content),
                         "files_count": len(file_list)
                     }
-                    logger.info(f"Exported zip file with {len(file_list)} files to Supabase ({len(zip_content)} bytes)")
+                    logger.info(f"✓ Exported zip file with {len(file_list)} files to Supabase ({len(zip_content)} bytes)")
                 else:
-                    logger.info("No files found in working directory to export")
+                    logger.warning(f"No files found in working directory {work_dir} to export")
+                    logger.warning(f"Directory had {len(work_files)} items total, but none were files")
                             
             except Exception as e:
-                logger.error(f"Failed to process working directory: {str(e)}")
+                logger.error(f"Failed to process working directory: {str(e)}", exc_info=True)
                 result["export_error"] = str(e)
         else:
-            logger.info("Supabase not configured - skipping file export")
+            logger.warning("Supabase not configured - skipping file export")
+            logger.warning("Set SUPABASE_URL and SUPABASE_KEY environment variables to enable file export")
+        
+        logger.info(f"=== File export process complete. Zip created: {exported_zip is not None} ===")
         
         if exported_zip:
             result["exported_zip"] = exported_zip
