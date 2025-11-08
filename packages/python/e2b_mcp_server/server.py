@@ -212,11 +212,17 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
         
         # Execute the code
         execution = sbx.run_code(arguments.code)
-        logger.info(f"Execution completed: stdout={len(execution.logs.stdout)} bytes, stderr={len(execution.logs.stderr)} bytes")
+        
+        # Extract stdout and stderr as lists of strings (log lines)
+        stdout_lines = [log.line for log in execution.logs.stdout] if hasattr(execution.logs, 'stdout') else []
+        stderr_lines = [log.line for log in execution.logs.stderr] if hasattr(execution.logs, 'stderr') else []
+        
+        logger.info(f"Execution completed: stdout={len(stdout_lines)} lines, stderr={len(stderr_lines)} lines")
         
         result = {
-            "stdout": execution.logs.stdout,
-            "stderr": execution.logs.stderr,
+            "results": execution.results,  # Include execution results
+            "stdout": stdout_lines,
+            "stderr": stderr_lines,
             "status": "success",
             "session_id": session_id,
             "input_directory": input_dir,
