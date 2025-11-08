@@ -213,9 +213,31 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
         # Execute the code
         execution = sbx.run_code(arguments.code)
         
-        # Extract stdout and stderr as lists of strings (log lines)
-        stdout_lines = [log.line for log in execution.logs.stdout] if hasattr(execution.logs, 'stdout') else []
-        stderr_lines = [log.line for log in execution.logs.stderr] if hasattr(execution.logs, 'stderr') else []
+        # Extract stdout and stderr - they could be strings, lists, or log objects
+        stdout_output = execution.logs.stdout if hasattr(execution.logs, 'stdout') else []
+        stderr_output = execution.logs.stderr if hasattr(execution.logs, 'stderr') else []
+        
+        # Handle different possible formats
+        if isinstance(stdout_output, str):
+            stdout_lines = [stdout_output] if stdout_output else []
+        elif isinstance(stdout_output, list):
+            # Check if list items have .line attribute or are already strings
+            if stdout_output and hasattr(stdout_output[0], 'line'):
+                stdout_lines = [log.line for log in stdout_output]
+            else:
+                stdout_lines = stdout_output
+        else:
+            stdout_lines = []
+            
+        if isinstance(stderr_output, str):
+            stderr_lines = [stderr_output] if stderr_output else []
+        elif isinstance(stderr_output, list):
+            if stderr_output and hasattr(stderr_output[0], 'line'):
+                stderr_lines = [log.line for log in stderr_output]
+            else:
+                stderr_lines = stderr_output
+        else:
+            stderr_lines = []
         
         logger.info(f"Execution completed: stdout={len(stdout_lines)} lines, stderr={len(stderr_lines)} lines")
         
