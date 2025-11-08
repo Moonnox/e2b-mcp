@@ -10,6 +10,8 @@ import os
 import json
 import logging
 import uuid
+import zipfile
+import io
 from typing import Any, Dict, List, Optional
 from collections.abc import Sequence
 
@@ -114,13 +116,18 @@ async def upload_to_supabase(filename: str, content: bytes) -> str:
         # Generate a unique filename to avoid collisions
         unique_filename = f"{uuid.uuid4()}_{filename}"
         
+        # Determine content type based on file extension
+        content_type = "application/octet-stream"
+        if filename.lower().endswith('.zip'):
+            content_type = "application/zip"
+        
         logger.info(f"Uploading file {filename} to Supabase as {unique_filename}")
         
         # Upload to the 'exports' bucket (async)
         await supabase_client.storage.from_('exports').upload(
             path=unique_filename,
             file=content,
-            file_options={"content-type": "application/octet-stream"}
+            file_options={"content-type": content_type}
         )
         
         # Generate signed URL valid for 24 hours (86400 seconds) (async)
@@ -252,33 +259,51 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
             "downloaded_files": downloaded_files
         }
         
-        # Check for generated files in output directory
-        exported_files = []
+        # Check for generated files in output directory and create a zip file
+        exported_zip = None
         if supabase_client:
             try:
                 # List files in output directory
                 output_files = sbx.files.list(output_dir)
                 logger.info(f"Found {len(output_files)} files in output directory")
                 
-                for file_info in output_files:
-                    if file_info.type == "file":
-                        try:
-                            # Read file from sandbox
-                            file_path = f"{output_dir}/{file_info.name}"
-                            file_content = sbx.files.read(file_path)
-                            
-                            # Upload to Supabase
-                            signed_url = await upload_to_supabase(file_info.name, file_content)
-                            exported_files.append({
-                                "filename": file_info.name,
-                                "url": signed_url,
-                                "size": len(file_content)
-                            })
-                            logger.info(f"Exported {file_info.name} to Supabase")
-                            
-                        except Exception as e:
-                            logger.error(f"Failed to export file {file_info.name}: {str(e)}")
-                            # Continue with other files even if one fails
+                # Filter for actual files (not directories)
+                file_list = [f for f in output_files if f.type == "file"]
+                
+                if file_list:
+                    # Create a zip file in memory
+                    zip_buffer = io.BytesIO()
+                    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                        for file_info in file_list:
+                            try:
+                                # Read file from sandbox
+                                file_path = f"{output_dir}/{file_info.name}"
+                                file_content = sbx.files.read(file_path)
+                                
+                                # Add file to zip
+                                zip_file.writestr(file_info.name, file_content)
+                                logger.info(f"Added {file_info.name} to zip archive")
+                                
+                            except Exception as e:
+                                logger.error(f"Failed to add file {file_info.name} to zip: {str(e)}")
+                                # Continue with other files even if one fails
+                    
+                    # Get the zip file bytes
+                    zip_buffer.seek(0)
+                    zip_content = zip_buffer.read()
+                    
+                    # Upload the zip file to Supabase
+                    zip_filename = f"output_{session_id}.zip"
+                    signed_url = await upload_to_supabase(zip_filename, zip_content)
+                    exported_zip = {
+                        "filename": zip_filename,
+                        "url": signed_url,
+                        "size": len(zip_content),
+                        "files_count": len(file_list)
+                    }
+                    logger.info(f"Exported zip file with {len(file_list)} files to Supabase")
+                else:
+                    logger.info("No files found in output directory to export")
                             
             except Exception as e:
                 logger.error(f"Failed to process output directory: {str(e)}")
@@ -286,8 +311,8 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
         else:
             logger.info("Supabase not configured - skipping file export")
         
-        if exported_files:
-            result["exported_files"] = exported_files
+        if exported_zip:
+            result["exported_zip"] = exported_zip
         
         # Close the sandbox
         if sbx:
