@@ -182,8 +182,8 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
         sbx = Sandbox()
         
         # Create input and output directories
-        sbx.filesystem.make_dir(input_dir)
-        sbx.filesystem.make_dir(output_dir)
+        sbx.files.make_dir(input_dir)
+        sbx.files.make_dir(output_dir)
         logger.info(f"Created directories: {input_dir}, {output_dir}")
         
         # Process file_urls if provided
@@ -202,7 +202,7 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
                     
                     # Upload to sandbox input directory
                     file_path = f"{input_dir}/{filename}"
-                    sbx.filesystem.write(file_path, file_content)
+                    sbx.files.write(file_path, file_content)
                     downloaded_files.append(filename)
                     logger.info(f"Uploaded {filename} to {file_path}")
                     
@@ -229,7 +229,7 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
         if supabase_client:
             try:
                 # List files in output directory
-                output_files = sbx.filesystem.list(output_dir)
+                output_files = sbx.files.list(output_dir)
                 logger.info(f"Found {len(output_files)} files in output directory")
                 
                 for file_info in output_files:
@@ -237,7 +237,7 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
                         try:
                             # Read file from sandbox
                             file_path = f"{output_dir}/{file_info.name}"
-                            file_content = sbx.filesystem.read(file_path)
+                            file_content = sbx.files.read(file_path)
                             
                             # Upload to Supabase
                             signed_url = await upload_to_supabase(file_info.name, file_content)
