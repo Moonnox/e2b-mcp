@@ -556,7 +556,7 @@ async def list_tools():
         "tools": [
             {
                 "name": "run_code",
-                "description": "Run python code in a secure sandbox by E2B. Using the Jupyter Notebook syntax. Supports downloading files from URLs (file_urls parameter) and exporting generated files to Supabase by saving them to the output directory.",
+                "description": "Run python code in a secure sandbox. Using the Jupyter Notebook syntax. Supports downloading files from URLs (file_urls parameter) which is useful if you want to inspect files provided to you.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
