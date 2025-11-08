@@ -263,7 +263,7 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
         
         # Close the sandbox
         if sbx:
-            sbx.close()
+            sbx.kill()
         
         return [
             TextContent(
@@ -279,7 +279,7 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
         # Close the sandbox in case of error
         if sbx:
             try:
-                sbx.close()
+                sbx.kill()
             except:
                 pass
         
