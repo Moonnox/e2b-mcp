@@ -178,8 +178,7 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
     
     # Generate unique session ID for multi-tenant isolation
     session_id = str(uuid.uuid4())
-    input_dir = f"/home/user/input_{session_id}"
-    output_dir = f"/home/user/output_{session_id}"
+    work_dir = f"/home/user/workspace_{session_id}"
     
     logger.info(f"Starting execution for session {session_id}")
     
@@ -188,10 +187,9 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
     try:
         sbx = Sandbox()
         
-        # Create input and output directories
-        sbx.files.make_dir(input_dir)
-        sbx.files.make_dir(output_dir)
-        logger.info(f"Created directories: {input_dir}, {output_dir}")
+        # Create working directory
+        sbx.files.make_dir(work_dir)
+        logger.info(f"Created working directory: {work_dir}")
         
         # Process file_urls if provided
         downloaded_files = []
@@ -207,8 +205,8 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
                     if not filename:
                         filename = f"file_{len(downloaded_files)}"
                     
-                    # Upload to sandbox input directory
-                    file_path = f"{input_dir}/{filename}"
+                    # Upload to sandbox working directory
+                    file_path = f"{work_dir}/{filename}"
                     sbx.files.write(file_path, file_content)
                     downloaded_files.append(filename)
                     logger.info(f"Uploaded {filename} to {file_path}")
@@ -217,8 +215,10 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
                     logger.error(f"Failed to process file URL {file_url}: {str(e)}")
                     # Continue with other files even if one fails
         
-        # Execute the code
-        execution = sbx.run_code(arguments.code)
+        # Change to working directory and execute the code
+        # Prepend a cd command to change to the working directory
+        code_with_cd = f"import os\nos.chdir('{work_dir}')\n\n{arguments.code}"
+        execution = sbx.run_code(code_with_cd)
         
         # Extract stdout and stderr - they could be strings, lists, or log objects
         stdout_output = execution.logs.stdout if hasattr(execution.logs, 'stdout') else []
@@ -255,21 +255,21 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
             "status": "success",
             "session_id": session_id,
             "code": arguments.code,  # Include the executed code
-            "input_directory": input_dir,
-            "output_directory": output_dir,
+            "working_directory": work_dir,
             "downloaded_files": downloaded_files
         }
         
-        # Check for generated files in output directory and create a zip file
+        # Check for generated files in working directory and create a zip file
         exported_zip = None
         if supabase_client:
             try:
-                # List files in output directory
-                output_files = sbx.files.list(output_dir)
-                logger.info(f"Found {len(output_files)} files in output directory")
+                # List files in working directory
+                work_files = sbx.files.list(work_dir)
+                logger.info(f"Found {len(work_files)} items in working directory")
                 
                 # Filter for actual files (not directories)
-                file_list = [f for f in output_files if f.type == "file"]
+                file_list = [f for f in work_files if f.type == "file"]
+                logger.info(f"Found {len(file_list)} files to export")
                 
                 if file_list:
                     # Create a zip file in memory
@@ -278,12 +278,12 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
                         for file_info in file_list:
                             try:
                                 # Read file from sandbox
-                                file_path = f"{output_dir}/{file_info.name}"
+                                file_path = f"{work_dir}/{file_info.name}"
                                 file_content = sbx.files.read(file_path)
                                 
                                 # Add file to zip
                                 zip_file.writestr(file_info.name, file_content)
-                                logger.info(f"Added {file_info.name} to zip archive")
+                                logger.info(f"Added {file_info.name} to zip archive ({len(file_content)} bytes)")
                                 
                             except Exception as e:
                                 logger.error(f"Failed to add file {file_info.name} to zip: {str(e)}")
@@ -302,12 +302,12 @@ async def handle_call_tool(name: str, arguments: Optional[Dict[str, Any]] = None
                         "size": len(zip_content),
                         "files_count": len(file_list)
                     }
-                    logger.info(f"Exported zip file with {len(file_list)} files to Supabase")
+                    logger.info(f"Exported zip file with {len(file_list)} files to Supabase ({len(zip_content)} bytes)")
                 else:
-                    logger.info("No files found in output directory to export")
+                    logger.info("No files found in working directory to export")
                             
             except Exception as e:
-                logger.error(f"Failed to process output directory: {str(e)}")
+                logger.error(f"Failed to process working directory: {str(e)}")
                 result["export_error"] = str(e)
         else:
             logger.info("Supabase not configured - skipping file export")
